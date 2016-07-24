@@ -1,32 +1,195 @@
 ---
-title: "data-sicence-8"
-author: "Rafael García"
+title: "Exercise quality prediction"
+author: "Rafael GarcÃ­a"
 date: "21 de julio de 2016"
 output: 
   html_document: 
+    code_folding: hide
+    keep_md: yes
     toc: yes
+    toc_depth: 4
+    toc_float: yes
+    fig_caption: yes
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+
+library(dplyr)
+library(knitr)
+library(caret)
+library(ggplot2)
+library(grid)
 ```
 
-## R Markdown
+## Getting and cleaning data
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+Data is coming from Human Activity Recognition project and can be downloaded from the web
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+```{r download}
+#download.file('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv', 'pml-training.csv')
+#download.file('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv', 'pml-testing.csv')
 
-```{r cars}
-summary(cars)
+plm.training <- read.csv('pml-training.csv', na.strings = c('', 'NA', '#DIV/0!'))
+plm.test_cases <- read.csv('pml-testing.csv', na.strings = c('', 'NA', '#DIV/0!'))
 ```
 
-## Including Plots
+As the training dataset contains a total of `r nrow(plm.training)`, which is big enough, we can split it into training and validation datasets in order to have an estimation of the errors.
 
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r training_validation}
+set.seed(52534)
+inTrain = createDataPartition(plm.training$classe, p = 3/4)[[1]]
+training = plm.training [ inTrain,]
+testing = plm.training [-inTrain,]
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+Now we can work with the training sample and see an extract of the training data below:
+```{r sample}
+kable(training[163:168,1:20], row.names = F)
+```
+
+First thing we see is that some columns are empty for most of the observations:
+
+* Complete cases: `r sum(complete.cases(training))` out of `r nrow(training)`
+* Columns with low observations: `r sum(colSums(!is.na(training)) < 1000)` out of `r ncol(training)`
+
+The columns with low data seems to be related to an "window aggregation", as they are only filled in when new_window is "yes". We can discard them as we will only work with the raw data, not the aggregations.
+
+Additionally, the user_name is also included in the dataset. As the model is intended to be executer over any user (and not only the training ones), we must discard this column as well.
+
+Finally, the columns related to timestamp, order (X) and window should be discarded as well, since they should not be used in the model.
+
+With this considerations, a new training dataset removing the neccesary columns can be created.
+
+```{r removing_columns}
+training2 <- training %>%
+                select(-one_of("X", "user_name")) %>%
+                select(-contains("timestamp")) %>%
+                select(-contains("window")) %>%
+                select(-starts_with("kurtosis_")) %>%
+                select(-starts_with("skewness_")) %>%
+                select(-starts_with("max_")) %>%
+                select(-starts_with("min_")) %>%
+                select(-starts_with("amplitude_")) %>%
+                select(-starts_with("var_")) %>%
+                select(-starts_with("avg_")) %>%
+                select(-starts_with("stddev_"))
+```
+
+It contains now a total of `r ncol(training2) - 1` predictors and `r nrow(training2)` observations.
+
+## Exploratory data analysis
+Once the data set is cleaned, it's the turn to make some exploratory data analysis. 
+
+Since there are many variables and it's not clear their relationship, one option is to run a tree partition and see what are the firts variables in the tree.
+
+```{r rpart, results='asis'}
+set.seed(12432)
+# Apply the model
+model_tree <- train(classe ~ ., training2, method='rpart')
+# Calculate the most important variables
+imp <- varImp(model_tree)
+most_imp <- imp$importance %>% mutate(Variable = row.names(imp$importance)) %>% arrange(desc(Overall)) %>% select(Variable, Importance = Overall) %>% slice(1:3)
+# Show in a table
+kable(most_imp)
+```
+
+Now we can plot how the classe depends on those variables
+```{r first_charts}
+ggplot(data=training2, aes(x=classe)) +
+  geom_violin(aes(y = pitch_forearm, fill = 'pitch_forearm'), alpha = 0.3) +
+  geom_violin(aes(y = roll_forearm, fill = 'roll_forearm'), alpha = 0.3) +
+  geom_violin(aes(y = roll_belt, fill = 'roll_belt'), alpha = 0.3) +
+  ylab('Value')
+```
+
+And we can see how effectively the figures are different and, depending on the classe, They have diferent intervals where they are bigger than the others.
+
+## Model building
+For the model, we can combine different prediction models, for example, random forest, linear discriminator analysis and generalized boosted regression modeling
+
+```{r models}
+set.seed(2341)
+# Calculate the three models and their predictions
+model_rf <- train(classe ~ ., training2, method = 'rf')
+model_lda <- train(classe ~ ., training2, method = 'lda')
+model_gbm <- train(classe ~ ., training2, method = 'gbm')
+
+pt_rf <- predict(model_rf)
+pt_lda <- predict(model_lda)
+pt_gbm <- predict(model_gbm)
+
+# Combine them
+pt_comb <- data.frame(classe = training2$classe, pt_rf, pt_lda, pt_gbm)
+model_comb <- train(classe ~ ., pt_comb, method = 'rf')
+```
+
+Finally, we can apply this prediction model over the testing dataset to evaluate the accuracy for every method and the combination (using confusion matrix)
+
+```{r confusion, results='asis'}
+# Predictions
+pt_rf <- predict(model_rf, newdata = testing)
+pt_lda <- predict(model_lda, newdata = testing)
+pt_gbm <- predict(model_lda, newdata = testing)
+
+pt_comb <- data.frame(pt_rf, pt_lda, pt_gbm)
+prediction_testing <- predict(model_comb, newdata = pt_comb)
+
+# Confusion matrixes
+conf_rf <- confusionMatrix(pt_rf, testing$classe)
+conf_lda <- confusionMatrix(pt_lda, testing$classe)
+conf_gbm <- confusionMatrix(pt_gbm, testing$classe)
+conf_comb <- confusionMatrix(prediction_testing, testing$classe)
+
+# Plots
+plot_rf <- ggplot(as.data.frame(conf_rf$table)) + 
+      geom_tile(aes(x=Reference, y=Prediction, fill=Freq)) +
+      geom_text(aes(x=Reference, y=Prediction, label=Freq)) +
+      scale_fill_gradient(low = 'grey', high='green') +
+      ggtitle('Random Forest')
+
+plot_lda <- ggplot(as.data.frame(conf_lda$table)) + 
+      geom_tile(aes(x=Reference, y=Prediction, fill=Freq)) +
+      geom_text(aes(x=Reference, y=Prediction, label=Freq)) +
+      scale_fill_gradient(low = 'grey', high='green') +
+      ggtitle('Linear Discriminant Analysis')
+
+plot_gbm <- ggplot(as.data.frame(conf_gbm$table)) + 
+      geom_tile(aes(x=Reference, y=Prediction, fill=Freq)) +
+      geom_text(aes(x=Reference, y=Prediction, label=Freq)) +
+      scale_fill_gradient(low = 'grey', high='green') +
+      ggtitle('Generalized Boosted Regression')
+
+plot_comb <- ggplot(as.data.frame(conf_comb$table)) + 
+      geom_tile(aes(x=Reference, y=Prediction, fill=Freq)) +
+      geom_text(aes(x=Reference, y=Prediction, label=Freq)) +
+      scale_fill_gradient(low = 'grey', high='green') +
+      ggtitle('Combined Model')
+
+grid.arrange(plot_rf, plot_lda, plot_gbm, plot_comb)
+
+# Finally add accuracy
+accuracy_df <- data.frame(Method = c('Random Forest', 'Linear Discriminant Analysis', 'Generalized Boosted Regression', 'Combined Model'),
+                          Accuracy = 100*c(conf_rf[['overall']]['Accuracy'], conf_lda[['overall']]['Accuracy'], conf_gbm[['overall']]['Accuracy'], conf_comb[['overall']]['Accuracy']))
+
+kable(accuracy_df, col.names=c('Method', 'Accuracy (%)'))
+```
+
+We can see how the accuracy for random forest and the combined model is more than 99%, while lda and gbm is about 70%.
+
+Finally, we can also check the confidence interval of the accuracy coming from the confusion matrix (using the combined model in this case). The 95% confidence interval for the accuracy is [`r conf_comb[['overall']]['AccuracyLower]`, `r conf_comb[['overall']]['AccuracyHigher]`], so around 99% accuracy is expected for the combined model.
+
+## Apply over test dataset
+Finally, we can apply the model over the testing dataset, for which we do not have the observed classe. The predicted values for the 20 tests are:
+
+```{r validation, results='asis'}
+pt_rf <- predict(model_rf, newdata=plm.test_cases)
+pt_lda <- predict(model_lda, newdata=plm.test_cases)
+pt_gbm <- predict(model_gbm, newdata=plm.test_cases)
+
+pt_comb <- data.frame(pt_rf, pt_lda, pt_gbm)
+
+exercise_pred <- predict(model_comb, pt_comb)
+
+kable(data.frame(problem_id = plm.test_cases$problem_id, predicted_classe = exercise_pred))
+```
