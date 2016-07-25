@@ -1,2 +1,2 @@
-# data-science-8
-Respository for Data Science 8 course in Coursera
+# Exercise quality prediction
+To view the report directly in the browser, you can go to GH-pages: [https://raggaraluz.github.io/data-science-8/]
