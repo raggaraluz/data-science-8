@@ -1,7 +1,7 @@
 ---
 title: "Exercise quality prediction"
-author: "Rafael GarcÃ­a"
-date: "21 de julio de 2016"
+author: "Rafael García"
+date: "2016-07-25"
 output: 
   html_document: 
     code_folding: hide
@@ -13,22 +13,23 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = F)
 
 library(dplyr)
 library(knitr)
 library(caret)
 library(ggplot2)
 library(grid)
+library(gridExtra)
 ```
 
 ## Getting and cleaning data
 
 Data is coming from Human Activity Recognition project and can be downloaded from the web
 
-```{r download}
-#download.file('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv', 'pml-training.csv')
-#download.file('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv', 'pml-testing.csv')
+```{r download, cache=TRUE}
+download.file('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv', 'pml-training.csv')
+download.file('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv', 'pml-testing.csv')
 
 plm.training <- read.csv('pml-training.csv', na.strings = c('', 'NA', '#DIV/0!'))
 plm.test_cases <- read.csv('pml-testing.csv', na.strings = c('', 'NA', '#DIV/0!'))
@@ -45,7 +46,7 @@ testing = plm.training [-inTrain,]
 
 Now we can work with the training sample and see an extract of the training data below:
 ```{r sample}
-kable(training[163:168,1:20], row.names = F)
+kable(training[training$X %in% 238:243,1:20], row.names = F)
 ```
 
 First thing we see is that some columns are empty for most of the observations:
@@ -53,7 +54,7 @@ First thing we see is that some columns are empty for most of the observations:
 * Complete cases: `r sum(complete.cases(training))` out of `r nrow(training)`
 * Columns with low observations: `r sum(colSums(!is.na(training)) < 1000)` out of `r ncol(training)`
 
-The columns with low data seems to be related to an "window aggregation", as they are only filled in when new_window is "yes". We can discard them as we will only work with the raw data, not the aggregations.
+The columns with low data seem to be related to an "window aggregation", as they are only filled in when *new_window* is *yes*. We can discard them as we will only work with the raw data, not the aggregations.
 
 Additionally, the user_name is also included in the dataset. As the model is intended to be executer over any user (and not only the training ones), we must discard this column as well.
 
@@ -106,9 +107,9 @@ ggplot(data=training2, aes(x=classe)) +
 And we can see how effectively the figures are different and, depending on the classe, They have diferent intervals where they are bigger than the others.
 
 ## Model building
-For the model, we can combine different prediction models, for example, random forest, linear discriminator analysis and generalized boosted regression modeling
+For the model, it can be used a combined prediction model using stacking. The models used for building the combined models will be random forest, linear discriminator analysis and generalized boosted regression modeling
 
-```{r models}
+```{r models, cache=TRUE}
 set.seed(2341)
 # Calculate the three models and their predictions
 model_rf <- train(classe ~ ., training2, method = 'rf')
@@ -175,9 +176,13 @@ accuracy_df <- data.frame(Method = c('Random Forest', 'Linear Discriminant Analy
 kable(accuracy_df, col.names=c('Method', 'Accuracy (%)'))
 ```
 
-We can see how the accuracy for random forest and the combined model is more than 99%, while lda and gbm is about 70%.
+We can see how the accuracy for random forest and the combined model is more than 99%, while lda and gbm is about 70%. Therefore, the **combined model will be used for this exercise**.
 
-Finally, we can also check the confidence interval of the accuracy coming from the confusion matrix (using the combined model in this case). The 95% confidence interval for the accuracy is [`r conf_comb[['overall']]['AccuracyLower]`, `r conf_comb[['overall']]['AccuracyHigher]`], so around 99% accuracy is expected for the combined model.
+Finally, we can also check the confidence interval of the accuracy coming from the confusion matrix (using the combined model in this case). **The 95% confidence interval for the accuracy is [`r conf_comb[['overall']]['AccuracyLower']`, `r conf_comb[['overall']]['AccuracyUpper']`]**, so around 99% accuracy is expected for the combined model.
+
+```{r accuracy}
+kable(as.data.frame(conf_comb[['overall']]), col.names=c('Value'))
+```
 
 ## Apply over test dataset
 Finally, we can apply the model over the testing dataset, for which we do not have the observed classe. The predicted values for the 20 tests are:
